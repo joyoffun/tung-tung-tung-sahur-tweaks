@@ -1,31 +1,18 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Applies or rolls back automated Windows, gaming, and network tweaks from the 105-Tweak HUD.
+    Native Windows Forms desktop GUI for the scriptable tweaks from the 105-Tweak Optimization HUD.
 .DESCRIPTION
-    Supports -Mode Apply or -Mode Rollback, preset profiles (-Preset Esports|PowerUser|Safe|All),
-    and automatic System Restore Point creation (-CreateRestorePoint).
-.EXAMPLE
-    .\Invoke-Optimization105.ps1 -Preset Esports -CreateRestorePoint
-.EXAMPLE
-    .\Invoke-Optimization105.ps1 -Mode Rollback -Preset Esports
+    Opens a desktop window (no web browser required) to apply or roll back selected
+    power, registry, visual, game-bar, network, and restore-point tweaks.
 #>
-
-[CmdletBinding()]
-param (
-    [ValidateSet("Apply", "Rollback")]
-    [string] $Mode = "Apply",
-
-    [ValidateSet("Esports", "PowerUser", "Safe", "All")]
-    [string] $Preset = "Esports",
-
-    [string[]] $IncludeTweaks = @(),
-
-    [switch] $CreateRestorePoint
-)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+[System.Windows.Forms.Application]::EnableVisualStyles()
 
 function Set-RegValue {
     param (
@@ -35,69 +22,44 @@ function Set-RegValue {
         [ValidateSet("DWord", "QWord", "String", "ExpandString", "Binary")]
         [string] $Type = "DWord"
     )
-
     if (-not (Test-Path -Path $Path)) {
         New-Item -Path $Path -Force | Out-Null
     }
     New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
-    Write-Host "[OK] $Path -> $Name = $Value" -ForegroundColor Green
 }
 
-$Presets = @{
-    Esports   = @(2, 4, 6, 7, 8, 9, 12, 13, 14, 15, 17, 18, 22, 24, 26, 29, 30, 58, 59, 103)
-    PowerUser = @(4, 5, 6, 7, 8, 11, 12, 13, 15, 16, 17, 22, 24, 26, 27, 29, 30, 58, 59, 89, 103)
-    Safe      = @(4, 5, 7, 13, 15, 16, 17, 18, 22, 26, 29, 30, 59, 103)
-    All       = @(2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 22, 24, 26, 27, 29, 30, 58, 59, 60, 89, 103)
-}
+function Invoke-TweakById {
+    param (
+        [Parameter(Mandatory)] [int] $Id,
+        [Parameter(Mandatory)] [ValidateSet("Apply", "Rollback")] [string] $Mode,
+        [Parameter(Mandatory)] [System.Windows.Forms.TextBox] $LogBox
+    )
 
-$SelectedTweaks = if ($IncludeTweaks.Count -gt 0) {
-    $IncludeTweaks | Sort-Object -Unique
-} else {
-    $Presets[$Preset] | Sort-Object -Unique
-}
-
-if ($Mode -eq "Apply" -and $CreateRestorePoint) {
-    Write-Host "=== [Safety] Creating Windows System Restore Point ===" -ForegroundColor Cyan
-    try {
-        Enable-ComputerRestore -Drive "$env:SystemDrive\" -ErrorAction SilentlyContinue
-        Checkpoint-Computer -Description "Pre-Optimization-HUD-105" -RestorePointType "MODIFY_SETTINGS" -ErrorAction Stop
-        Write-Host "[OK] System Restore Point created." -ForegroundColor Green
-    } catch {
-        Write-Warning "Skipped Restore Point (Windows limits automatic checkpoints to once per 24 hours)."
-    }
-}
-
-foreach ($tweak in $SelectedTweaks) {
-    switch ($tweak) {
+    switch ($Id) {
         2 {
             if ($Mode -eq "Apply") {
-                # [#2] Unlock & Activate Ultimate Performance Power Plan
                 $ultOut = powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 2>&1
                 if ($ultOut -match "([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})") {
-                    powercfg /setactive $Matches[1]
-                    Write-Host "[OK] Activated Ultimate Performance Plan ($($Matches[1]))" -ForegroundColor Green
+                    powercfg /setactive $Matches[1] | Out-Null
+                    $LogBox.AppendText("[OK] #2 Activated Ultimate Performance Plan ($($Matches[1])).`r`n")
                 } else {
-                    powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c 2>$null
-                    Write-Host "[OK] Activated High Performance fallback plan" -ForegroundColor Green
+                    powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c 2>$null | Out-Null
+                    $LogBox.AppendText("[OK] #2 Activated High Performance fallback plan.`r`n")
                 }
             } else {
-                powercfg /setactive 381b4222-f694-41f0-9685-ff5bb260df2e 2>$null
-                Write-Host "[REVERT] Restored Balanced power plan" -ForegroundColor Yellow
+                powercfg /setactive 381b4222-f694-41f0-9685-ff5bb260df2e 2>$null | Out-Null
+                $LogBox.AppendText("[REVERT] #2 Restored Balanced power plan.`r`n")
             }
         }
         4 {
-            if ($Mode -eq "Apply") {
-                Set-RegValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" -Name "AllowTelemetry" -Value 1 -Type "DWord"
-            } else {
-                Set-RegValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" -Name "AllowTelemetry" -Value 3 -Type "DWord"
-            }
+            $val = if ($Mode -eq "Apply") { 1 } else { 3 }
+            Set-RegValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" -Name "AllowTelemetry" -Value $val -Type "DWord"
+            $LogBox.AppendText("[$Mode] #4 Diagnostic telemetry (AllowTelemetry) -> $val`r`n")
         }
         5 {
-            if ($Mode -eq "Apply") {
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy" -Name "01" -Value 1 -Type "DWord"
-            } else {
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy" -Name "01" -Value 0 -Type "DWord"
-            }
+            $val = if ($Mode -eq "Apply") { 1 } else { 0 }
+            Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy" -Name "01" -Value $val -Type "DWord"
+            $LogBox.AppendText("[$Mode] #5 Storage Sense policy -> $val`r`n")
         }
         6 {
             if ($Mode -eq "Apply") {
@@ -110,35 +72,30 @@ foreach ($tweak in $SelectedTweaks) {
                 Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" -Name "VisualFXSetting" -Value 0 -Type "DWord"
                 Set-RegValue -Path "HKCU:\Control Panel\Desktop\WindowMetrics" -Name "MinAnimate" -Value "1" -Type "String"
             }
+            $LogBox.AppendText("[$Mode] #6 Visual effects & animations updated.`r`n")
         }
         7 {
-            if ($Mode -eq "Apply") {
-                Set-RegValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" -Name "DODownloadMode" -Value 0 -Type "DWord"
-            } else {
-                Set-RegValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" -Name "DODownloadMode" -Value 1 -Type "DWord"
-            }
+            $val = if ($Mode -eq "Apply") { 0 } else { 1 }
+            Set-RegValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" -Name "DODownloadMode" -Value $val -Type "DWord"
+            $LogBox.AppendText("[$Mode] #7 Delivery Optimization mode -> $val`r`n")
         }
         8 {
-            if ($Mode -eq "Apply") {
-                Set-RegValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -Value 2 -Type "DWord"
-            } else {
-                Set-RegValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -Value 1 -Type "DWord"
-            }
+            $val = if ($Mode -eq "Apply") { 2 } else { 1 }
+            Set-RegValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -Value $val -Type "DWord"
+            $LogBox.AppendText("[$Mode] #8 HAGS (HwSchMode) -> $val`r`n")
         }
         9 {
-            if ($Mode -eq "Apply") {
-                Set-RegValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" -Name "HiberbootEnabled" -Value 0 -Type "DWord"
-            } else {
-                Set-RegValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" -Name "HiberbootEnabled" -Value 1 -Type "DWord"
-            }
+            $val = if ($Mode -eq "Apply") { 0 } else { 1 }
+            Set-RegValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" -Name "HiberbootEnabled" -Value $val -Type "DWord"
+            $LogBox.AppendText("[$Mode] #9 Fast Startup (HiberbootEnabled) -> $val`r`n")
         }
         10 {
             if ($Mode -eq "Apply") {
-                powercfg -h off
-                Write-Host "[OK] Hibernation disabled and hiberfil.sys removed." -ForegroundColor Green
+                powercfg -h off | Out-Null
+                $LogBox.AppendText("[OK] #10 Hibernation disabled (hiberfil.sys removed).`r`n")
             } else {
-                powercfg -h on
-                Write-Host "[REVERT] Hibernation re-enabled." -ForegroundColor Yellow
+                powercfg -h on | Out-Null
+                $LogBox.AppendText("[REVERT] #10 Hibernation re-enabled.`r`n")
             }
         }
         11 {
@@ -147,10 +104,10 @@ foreach ($tweak in $SelectedTweaks) {
                 if (-not (Test-Path $godPath)) {
                     New-Item -Path $godPath -ItemType Directory -Force | Out-Null
                 }
-                Write-Host "[OK] Created God Mode folder on Desktop." -ForegroundColor Green
+                $LogBox.AppendText("[OK] #11 Created God Mode folder on Desktop.`r`n")
             } elseif (Test-Path $godPath) {
                 Remove-Item -Path $godPath -Force -Recurse
-                Write-Host "[REVERT] Removed God Mode folder." -ForegroundColor Yellow
+                $LogBox.AppendText("[REVERT] #11 Removed God Mode folder from Desktop.`r`n")
             }
         }
         12 {
@@ -158,27 +115,22 @@ foreach ($tweak in $SelectedTweaks) {
             if ($Mode -eq "Apply") {
                 New-Item -Path $clsidPath -Force | Out-Null
                 Set-ItemProperty -Path $clsidPath -Name "(Default)" -Value "" -Force
-                Write-Host "[OK] Classic context menu enabled (restart Explorer to apply immediately)." -ForegroundColor Green
+                $LogBox.AppendText("[OK] #12 Classic Windows 11 right-click menu enabled.`r`n")
             } else {
                 Remove-Item -Path "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}" -Recurse -Force -ErrorAction SilentlyContinue
-                Write-Host "[REVERT] Restored default Windows 11 context menu." -ForegroundColor Yellow
+                $LogBox.AppendText("[REVERT] #12 Restored default Windows 11 context menu.`r`n")
             }
         }
         13 {
-            if ($Mode -eq "Apply") {
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "RotatingLockScreenOverlayEnabled" -Value 0 -Type "DWord"
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338387Enabled" -Value 0 -Type "DWord"
-            } else {
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "RotatingLockScreenOverlayEnabled" -Value 1 -Type "DWord"
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338387Enabled" -Value 1 -Type "DWord"
-            }
+            $val = if ($Mode -eq "Apply") { 0 } else { 1 }
+            Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "RotatingLockScreenOverlayEnabled" -Value $val -Type "DWord"
+            Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338387Enabled" -Value $val -Type "DWord"
+            $LogBox.AppendText("[$Mode] #13 Lock screen tips/ads -> $val`r`n")
         }
         14 {
-            if ($Mode -eq "Apply") {
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "EnableTransparency" -Value 0 -Type "DWord"
-            } else {
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "EnableTransparency" -Value 1 -Type "DWord"
-            }
+            $val = if ($Mode -eq "Apply") { 0 } else { 1 }
+            Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "EnableTransparency" -Value $val -Type "DWord"
+            $LogBox.AppendText("[$Mode] #14 Transparency effects -> $val`r`n")
         }
         15 {
             if ($Mode -eq "Apply") {
@@ -189,22 +141,18 @@ foreach ($tweak in $SelectedTweaks) {
                 Set-RegValue -Path "HKCU:\Control Panel\Accessibility\StickyKeys" -Name "Flags" -Value "510" -Type "String"
                 Set-RegValue -Path "HKCU:\Control Panel\Accessibility\Keyboard Response" -Name "Flags" -Value "126" -Type "String"
             }
+            $LogBox.AppendText("[$Mode] #15 Sticky/Filter Keys prompts updated.`r`n")
         }
         16 {
-            if ($Mode -eq "Apply") {
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Clipboard" -Name "EnableClipboardHistory" -Value 1 -Type "DWord"
-            } else {
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Clipboard" -Name "EnableClipboardHistory" -Value 0 -Type "DWord"
-            }
+            $val = if ($Mode -eq "Apply") { 1 } else { 0 }
+            Set-RegValue -Path "HKCU:\Software\Microsoft\Clipboard" -Name "EnableClipboardHistory" -Value $val -Type "DWord"
+            $LogBox.AppendText("[$Mode] #16 Clipboard history (Win+V) -> $val`r`n")
         }
         17 {
-            if ($Mode -eq "Apply") {
-                Set-RegValue -Path "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings" -Name "ActiveHoursStart" -Value 8 -Type "DWord"
-                Set-RegValue -Path "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings" -Name "ActiveHoursEnd" -Value 23 -Type "DWord"
-            } else {
-                Set-RegValue -Path "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings" -Name "ActiveHoursStart" -Value 8 -Type "DWord"
-                Set-RegValue -Path "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings" -Name "ActiveHoursEnd" -Value 17 -Type "DWord"
-            }
+            $endHour = if ($Mode -eq "Apply") { 23 } else { 17 }
+            Set-RegValue -Path "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings" -Name "ActiveHoursStart" -Value 8 -Type "DWord"
+            Set-RegValue -Path "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings" -Name "ActiveHoursEnd" -Value $endHour -Type "DWord"
+            $LogBox.AppendText("[$Mode] #17 Update active hours -> 8 AM to $endHour:00.`r`n")
         }
         18 {
             if ($Mode -eq "Apply") {
@@ -215,59 +163,51 @@ foreach ($tweak in $SelectedTweaks) {
                 Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR" -Name "AppCaptureEnabled" -Value 1 -Type "DWord"
                 Set-RegValue -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_Enabled" -Value 1 -Type "DWord"
             }
+            $LogBox.AppendText("[$Mode] #18 Xbox Game Bar capture updated.`r`n")
         }
         19 {
-            if ($Mode -eq "Apply") {
-                Set-RegValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" -Name "Enabled" -Value 0 -Type "DWord"
-            } else {
-                Set-RegValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" -Name "Enabled" -Value 1 -Type "DWord"
-            }
+            $val = if ($Mode -eq "Apply") { 0 } else { 1 }
+            Set-RegValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" -Name "Enabled" -Value $val -Type "DWord"
+            $LogBox.AppendText("[$Mode] #19 Core Isolation (Memory Integrity) -> $val`r`n")
         }
         22 {
-            if ($Mode -eq "Apply") {
-                Set-RegValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance" -Name "fAllowToGetHelp" -Value 0 -Type "DWord"
-            } else {
-                Set-RegValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance" -Name "fAllowToGetHelp" -Value 1 -Type "DWord"
-            }
+            $val = if ($Mode -eq "Apply") { 0 } else { 1 }
+            Set-RegValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance" -Name "fAllowToGetHelp" -Value $val -Type "DWord"
+            $LogBox.AppendText("[$Mode] #22 Remote Assistance -> $val`r`n")
         }
         24 {
             if ($Mode -eq "Apply") {
-                Optimize-Volume -DriveLetter C -ReTrim -Verbose
-                Write-Host "[OK] SSD TRIM optimization completed on C:." -ForegroundColor Green
+                Optimize-Volume -DriveLetter C -ReTrim -ErrorAction SilentlyContinue | Out-Null
+                $LogBox.AppendText("[OK] #24 SSD TRIM ran on C:.`r`n")
             } else {
-                Write-Host "[INFO] [#24] SSD TRIM is a non-destructive maintenance step (no rollback needed)." -ForegroundColor Yellow
+                $LogBox.AppendText("[INFO] #24 SSD TRIM is non-destructive (no rollback needed).`r`n")
             }
         }
         26 {
-            if ($Mode -eq "Apply") {
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338388Enabled" -Value 0 -Type "DWord"
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338389Enabled" -Value 0 -Type "DWord"
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowSyncProviderNotifications" -Value 0 -Type "DWord"
-            } else {
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338388Enabled" -Value 1 -Type "DWord"
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338389Enabled" -Value 1 -Type "DWord"
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowSyncProviderNotifications" -Value 1 -Type "DWord"
-            }
+            $val = if ($Mode -eq "Apply") { 0 } else { 1 }
+            Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338388Enabled" -Value $val -Type "DWord"
+            Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338389Enabled" -Value $val -Type "DWord"
+            Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowSyncProviderNotifications" -Value $val -Type "DWord"
+            $LogBox.AppendText("[$Mode] #26 Suggested content / ads -> $val`r`n")
         }
         27 {
             if ($Mode -eq "Apply") {
                 if (Get-Command winget -ErrorAction SilentlyContinue) {
-                    winget upgrade --all --accept-source-agreements --accept-package-agreements
+                    $LogBox.AppendText("[INFO] #27 Running winget upgrade --all in background...`r`n")
+                    Start-Process -FilePath "winget" -ArgumentList "upgrade --all --accept-source-agreements --accept-package-agreements" -NoNewWindow -Wait
+                    $LogBox.AppendText("[OK] #27 winget upgrade finished.`r`n")
                 } else {
-                    Write-Warning "winget not detected on this system."
+                    $LogBox.AppendText("[WARN] #27 winget not found.`r`n")
                 }
             } else {
-                Write-Host "[INFO] [#27] winget upgrades do not have an automatic registry rollback." -ForegroundColor Yellow
+                $LogBox.AppendText("[INFO] #27 winget updates have no automatic rollback.`r`n")
             }
         }
         29 {
-            if ($Mode -eq "Apply") {
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer" -Name "ShowRecent" -Value 0 -Type "DWord"
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer" -Name "ShowFrequent" -Value 0 -Type "DWord"
-            } else {
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer" -Name "ShowRecent" -Value 1 -Type "DWord"
-                Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer" -Name "ShowFrequent" -Value 1 -Type "DWord"
-            }
+            $val = if ($Mode -eq "Apply") { 0 } else { 1 }
+            Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer" -Name "ShowRecent" -Value $val -Type "DWord"
+            Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer" -Name "ShowFrequent" -Value $val -Type "DWord"
+            $LogBox.AppendText("[$Mode] #29 Explorer recent/frequent -> $val`r`n")
         }
         30 {
             if ($Mode -eq "Apply") {
@@ -277,60 +217,174 @@ foreach ($tweak in $SelectedTweaks) {
                 Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "HideFileExt" -Value 1 -Type "DWord"
                 Set-RegValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Hidden" -Value 2 -Type "DWord"
             }
+            $LogBox.AppendText("[$Mode] #30 File extensions & hidden items updated.`r`n")
         }
         58 {
             $adapters = Get-NetAdapter | Where-Object { $_.Status -eq "Up" -and $_.HardwareInterface -eq $true }
             foreach ($nic in $adapters) {
                 if ($Mode -eq "Apply") {
                     Set-DnsClientServerAddress -InterfaceIndex $nic.ifIndex -ServerAddresses ("1.1.1.1", "1.0.0.1")
-                    Write-Host "[OK] Set DNS 1.1.1.1 / 1.0.0.1 on $($nic.Name)" -ForegroundColor Green
+                    $LogBox.AppendText("[OK] #58 Set DNS 1.1.1.1 / 1.0.0.1 on $($nic.Name).`r`n")
                 } else {
                     Set-DnsClientServerAddress -InterfaceIndex $nic.ifIndex -ResetServerAddresses
-                    Write-Host "[REVERT] Reset DNS to DHCP on $($nic.Name)" -ForegroundColor Yellow
+                    $LogBox.AppendText("[REVERT] #58 Reset DNS to DHCP on $($nic.Name).`r`n")
                 }
             }
         }
         59 {
             if ($Mode -eq "Apply") {
                 Clear-DnsClientCache
-                Write-Host "[OK] Flushed local DNS cache." -ForegroundColor Green
+                $LogBox.AppendText("[OK] #59 Flushed local DNS cache.`r`n")
             } else {
-                Write-Host "[INFO] [#59] DNS cache repopulates automatically as you browse." -ForegroundColor Yellow
+                $LogBox.AppendText("[INFO] #59 DNS cache repopulates automatically.`r`n")
             }
         }
         60 {
             if ($Mode -eq "Apply") {
                 netsh int ip reset | Out-Null
                 netsh winsock reset | Out-Null
-                Write-Host "[OK] Reset TCP/IP and Winsock catalog (reboot required)." -ForegroundColor Green
+                $LogBox.AppendText("[OK] #60 Reset TCP/IP & Winsock (reboot required).`r`n")
             } else {
-                Write-Host "[INFO] [#60] Winsock/TCP reset restores clean Windows networking defaults." -ForegroundColor Yellow
+                $LogBox.AppendText("[INFO] #60 Winsock/TCP reset uses clean Windows defaults.`r`n")
             }
         }
         89 {
-            $nlPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\CloudStore\Store\DefaultAccount\Current\default`$windows.data.bluelightreduction.settings\windows.data.bluelightreduction.settings"
-            if ($Mode -eq "Apply") {
-                if (Test-Path $nlPath) {
-                    Write-Host "[OK] Night Light CloudStore profile found. Opening Night Light settings..." -ForegroundColor Green
-                }
-                Start-Process "ms-settings:nightlight"
-            } else {
-                Start-Process "ms-settings:nightlight"
-            }
+            Start-Process "ms-settings:nightlight"
+            $LogBox.AppendText("[$Mode] #89 Opened Night Light settings.`r`n")
         }
         103 {
             if ($Mode -eq "Apply") {
                 Enable-ComputerRestore -Drive "$env:SystemDrive\" -ErrorAction SilentlyContinue
-                Checkpoint-Computer -Description "Manual-HUD-Checkpoint" -RestorePointType "MODIFY_SETTINGS" -ErrorAction SilentlyContinue
-                Write-Host "[OK] System Restore Point checkpoint triggered." -ForegroundColor Green
+                try {
+                    Checkpoint-Computer -Description "PC-Tweak-GUI-Checkpoint" -RestorePointType "MODIFY_SETTINGS" -ErrorAction Stop
+                    $LogBox.AppendText("[OK] #103 Created System Restore Point.`r`n")
+                } catch {
+                    $LogBox.AppendText("[WARN] #103 Restore Point skipped (Windows allows 1 automatic point per 24h).`r`n")
+                }
             } else {
                 Start-Process "rstrui.exe"
+                $LogBox.AppendText("[REVERT] #103 Opened System Restore (rstrui.exe).`r`n")
             }
-        }
-        default {
-            Write-Warning "Tweak #$tweak is manual/BIOS/workflow-only or not in the automated scriptable set."
         }
     }
 }
 
-Write-Host "$Mode complete! Restart your PC to apply kernel, registry, and GPU changes." -ForegroundColor Yellow
+# Build Native Windows Forms Window
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "Windows Optimization Controller (Desktop GUI)"
+$form.Size = New-Object System.Drawing.Size(640, 560)
+$form.StartPosition = "CenterScreen"
+$form.TopMost = $true
+
+$checklist = New-Object System.Windows.Forms.CheckedListBox
+$checklist.Location = New-Object System.Drawing.Point(16, 16)
+$checklist.Size = New-Object System.Drawing.Size(592, 270)
+$checklist.CheckOnClick = $true
+
+$tweakEntries = @(
+    @{ Id = 2;   Text = "#2 Unlock & Activate Ultimate Performance Power Plan" },
+    @{ Id = 4;   Text = "#4 Reduce Diagnostic Telemetry (Required Only)" },
+    @{ Id = 5;   Text = "#5 Enable Storage Sense" },
+    @{ Id = 6;   Text = "#6 Tune Visual Effects (Keep Smooth Fonts, Disable Animations)" },
+    @{ Id = 7;   Text = "#7 Disable Update Delivery Optimization Sharing" },
+    @{ Id = 8;   Text = "#8 Enable Hardware-Accelerated GPU Scheduling (HAGS)" },
+    @{ Id = 9;   Text = "#9 Disable Fast Startup" },
+    @{ Id = 10;  Text = "#10 [Caution] Disable Hibernation (hiberfil.sys)" },
+    @{ Id = 11;  Text = "#11 Create God Mode Control Folder on Desktop" },
+    @{ Id = 12;  Text = "#12 Restore Classic Right-Click Context Menu (Win 11)" },
+    @{ Id = 13;  Text = "#13 Disable Lock Screen Tips & Ads" },
+    @{ Id = 14;  Text = "#14 Turn Off Transparency Effects" },
+    @{ Id = 15;  Text = "#15 Disable Sticky Keys & Filter Keys Prompts" },
+    @{ Id = 16;  Text = "#16 Enable Clipboard History (Win + V)" },
+    @{ Id = 17;  Text = "#17 Set Windows Update Active Hours (8 AM - 11 PM)" },
+    @{ Id = 18;  Text = "#18 Disable Xbox Game Bar & Background Capture" },
+    @{ Id = 19;  Text = "#19 [Caution] Disable Core Isolation (Memory Integrity)" },
+    @{ Id = 22;  Text = "#22 Disable Remote Assistance" },
+    @{ Id = 24;  Text = "#24 Run SSD TRIM Optimization on C:" },
+    @{ Id = 26;  Text = "#26 Disable Suggested Content in Start & Settings" },
+    @{ Id = 27;  Text = "#27 Batch Update Apps via winget" },
+    @{ Id = 29;  Text = "#29 Turn Off File Explorer Recent/Frequent Clutter" },
+    @{ Id = 30;  Text = "#30 Show File Extensions & Hidden Items" },
+    @{ Id = 58;  Text = "#58 Set Cloudflare DNS (1.1.1.1 / 1.0.0.1)" },
+    @{ Id = 59;  Text = "#59 Flush Local DNS Cache" },
+    @{ Id = 60;  Text = "#60 [Caution] Reset Winsock & TCP/IP Stack" },
+    @{ Id = 89;  Text = "#89 Open Night Light Settings" },
+    @{ Id = 103; Text = "#103 Create System Restore Point" }
+)
+
+foreach ($entry in $tweakEntries) {
+    $defaultChecked = ($entry.Id -notin @(10, 19, 60, 27))
+    [void]$checklist.Items.Add($entry.Text, $defaultChecked)
+}
+
+$btnApply = New-Object System.Windows.Forms.Button
+$btnApply.Text = "Apply Selected"
+$btnApply.Location = New-Object System.Drawing.Point(16, 298)
+$btnApply.Size = New-Object System.Drawing.Size(140, 34)
+
+$btnRollback = New-Object System.Windows.Forms.Button
+$btnRollback.Text = "Rollback Selected"
+$btnRollback.Location = New-Object System.Drawing.Point(166, 298)
+$btnRollback.Size = New-Object System.Drawing.Size(145, 34)
+
+$btnSelectAll = New-Object System.Windows.Forms.Button
+$btnSelectAll.Text = "Select All"
+$btnSelectAll.Location = New-Object System.Drawing.Point(321, 298)
+$btnSelectAll.Size = New-Object System.Drawing.Size(95, 34)
+
+$btnClearAll = New-Object System.Windows.Forms.Button
+$btnClearAll.Text = "Clear All"
+$btnClearAll.Location = New-Object System.Drawing.Point(424, 298)
+$btnClearAll.Size = New-Object System.Drawing.Size(95, 34)
+
+$logBox = New-Object System.Windows.Forms.TextBox
+$logBox.Location = New-Object System.Drawing.Point(16, 344)
+$logBox.Size = New-Object System.Drawing.Size(592, 160)
+$logBox.Multiline = $true
+$logBox.ScrollBars = "Vertical"
+$logBox.ReadOnly = $true
+$logBox.Text = "Ready. Check tweaks above and click 'Apply Selected' or 'Rollback Selected'.`r`n"
+
+function Get-SelectedTweakIds {
+    $ids = @()
+    for ($i = 0; $i -lt $checklist.Items.Count; $i++) {
+        if ($checklist.GetItemChecked($i)) {
+            $ids += $tweakEntries[$i].Id
+        }
+    }
+    return $ids
+}
+
+$btnApply.Add_Click({
+    $ids = Get-SelectedTweakIds
+    $logBox.AppendText("--- Applying $($ids.Count) selected tweak(s) ---`r`n")
+    foreach ($id in $ids) {
+        Invoke-TweakById -Id $id -Mode "Apply" -LogBox $logBox
+    }
+    $logBox.AppendText("--- Done. Restart your PC for full effect. ---`r`n")
+})
+
+$btnRollback.Add_Click({
+    $ids = Get-SelectedTweakIds
+    $logBox.AppendText("--- Rolling back $($ids.Count) selected tweak(s) ---`r`n")
+    foreach ($id in $ids) {
+        Invoke-TweakById -Id $id -Mode "Rollback" -LogBox $logBox
+    }
+    $logBox.AppendText("--- Rollback complete. Restart your PC if needed. ---`r`n")
+})
+
+$btnSelectAll.Add_Click({
+    for ($i = 0; $i -lt $checklist.Items.Count; $i++) {
+        $checklist.SetItemChecked($i, $true)
+    }
+})
+
+$btnClearAll.Add_Click({
+    for ($i = 0; $i -lt $checklist.Items.Count; $i++) {
+        $checklist.SetItemChecked($i, $false)
+    }
+})
+
+$form.Controls.AddRange(@($checklist, $btnApply, $btnRollback, $btnSelectAll, $btnClearAll, $logBox))
+$form.Add_Shown({ $form.TopMost = $false; $form.Activate() })
+[void]$form.ShowDialog()
